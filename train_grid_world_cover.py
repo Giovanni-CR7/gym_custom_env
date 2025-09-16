@@ -88,16 +88,16 @@ if __name__ == "__main__":
     )
 
     if train:
-        env = make_env(render_mode=None, size=5)  # treino sem render
+        env = make_env(render_mode=None, size=10)  # treino sem render
         model = PPO(
-            "MultiInputPolicy",  
+            "MultiInputPolicy",  #entender essa estrutura de rede
             env,
             verbose=1,
             device="cpu",
-            ent_coef=0.01,
-            gamma=0.9
+            ent_coef=0.01, #entender hiperparâmetro 
+            gamma=0.9 #entender hiperparâmetro 
         )
-
+        #deixar o plot visual
 
         logger = configure("log/ppo_coverage", ["stdout", "csv", "tensorboard"])
         model.set_logger(logger)
@@ -114,7 +114,7 @@ if __name__ == "__main__":
     model = PPO.load("data/ppo_coverage")
 
     # teste com render
-    env = make_env(render_mode="human", size=5)
+    env = make_env(render_mode="human", size=10)
     obs, _ = env.reset()
     done, truncated = False, False
     steps = 0
@@ -128,3 +128,4 @@ if __name__ == "__main__":
 
     env.close()
 
+#deixar o plot visual
