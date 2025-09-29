@@ -63,30 +63,36 @@ class CoverageWrapper(gym.Wrapper):
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         self.current_step += 1
+        
+        # Definir agent_pos antes de usá-lo
         agent_pos = tuple(obs["agent"])
-
-        # NOVO: Sistema de recompensa modificado
+        
+        # Sistema de recompensas
         if info.get("hit_obstacle", False):
-            reward = -2  # Penalidade forte por colidir com um obstáculo
+            reward = -5  # Penalidade por colisão
         elif agent_pos not in self.visited:
             self.visited.add(agent_pos)
-            reward = 1   # Recompensa por visitar uma nova célula
+            reward = 10  # Recompensa por nova descoberta
         else:
-            reward = -0.1 # Pequena penalidade para não ficar parado
-
-        # NOVO: Fim quando cobre todo o grid ACESSÍVEL
+            reward = -0.5  # Penalidade por explorar área conhecida
+            
+        # Bonus por progresso na cobertura
+        coverage_bonus = (len(self.visited) / self.total_coverable_cells) * 5
+        
+        # Verificação do término do episódio
         if len(self.visited) == self.total_coverable_cells:
             terminated = True
-            reward += 20 # Recompensa maior por completar o objetivo
+            reward += 100  # Recompensa por completar o objetivo
         elif self.current_step >= self.max_steps:
             truncated = True
+            reward -= 10  # Penalidade por atingir o limite de passos
         else:
             terminated = False
+            
+        return self._get_obs(obs), reward + coverage_bonus, terminated, truncated, info
 
-        return self._get_obs(obs), reward, terminated, truncated, info
 
-
-def make_env(render_mode=None, size=10):
+def make_env(render_mode=None, size=5):
     # Passamos o número de obstáculos para o ambiente
     env = gym.make("gymnasium_env/GridWorld-Coverage-v0", size=size, render_mode=render_mode, num_obstacles=3)
     env = CoverageWrapper(env)
@@ -101,7 +107,7 @@ if __name__ == "__main__":
         entry_point=GridWorldCoverRenderEnv,
     )
     
-    GRID_SIZE = 10
+    GRID_SIZE = 5
 
     if train:
         env = make_env(render_mode=None, size=GRID_SIZE)
@@ -110,8 +116,12 @@ if __name__ == "__main__":
             env,
             verbose=1,
             device="cpu",
-            ent_coef=0.01,
-            gamma=0.99 # Um gamma um pouco maior pode ajudar em tarefas de longo prazo
+            ent_coef=0.05,           # Aumentado para mais exploração
+            gamma=0.95,              # Reduzido para foco em recompensas imediatas
+            n_steps=128,             # Reduzido para atualizações mais frequentes
+            batch_size=256,          # Ajustado para melhor aprendizado
+            learning_rate=0.00025,   # Taxa de aprendizado ajustada
+            clip_range=0.2,          # Para maior estabilidade
         )
 
         logger = configure("log/ppo_coverage_obstacles", ["stdout", "csv", "tensorboard"])
