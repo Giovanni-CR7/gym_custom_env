@@ -74,7 +74,7 @@ class CoverageWrapper(gym.Wrapper):
             self.visited.add(agent_pos)
             reward = 10  # Recompensa por nova descoberta
         else:
-            reward = -0.5  # Penalidade por explorar área conhecida
+            reward = -1  # Penalidade por explorar área conhecida
             
         # Bonus por progresso na cobertura
         coverage_bonus = (len(self.visited) / self.total_coverable_cells) * 5
@@ -112,7 +112,9 @@ if __name__ == "__main__":
     if train:
         env = make_env(render_mode=None, size=GRID_SIZE)
         model = PPO(
-            "MultiInputPolicy",
+            "MultiInputPolicy",   # política (rede neural) que trabalha com a obs na forma de dicionários, 
+            #cada chave do dicionário tem sua própria sub-rede neural (que pode ser uma MLP, CNN,...)
+            #depois todas as representações são concatenadas em um único vetor que alimenta as cabeças da política (pi) e do valor(V)
             env,
             verbose=1,
             device="cpu",
