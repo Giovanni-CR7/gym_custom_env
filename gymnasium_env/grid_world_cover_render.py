@@ -7,12 +7,12 @@ from gymnasium import spaces
 class GridWorldCoverRenderEnv(gym.Env):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 10}
 
-    def __init__(self, size=5, render_mode=None, num_obstacles=3): # NOVO: recebe num_obstacles
+    def __init__(self, size=5, render_mode=None, num_obstacles=3): #recebe num_obstacles
         self.size = size
         self.window_size = 512
-        self.num_obstacles = num_obstacles # NOVO: armazena o número de obstáculos
-        self._obstacle_locations = set()  # NOVO: armazena as posições dos obstáculos
-        self.visited_cells = set() # NOVO: para visualização
+        self.num_obstacles = num_obstacles # armazena o número de obstáculos
+        self._obstacle_locations = set()  #  armazena as posições dos obstáculos
+        self.visited_cells = set() #  para visualização
 
         self.action_space = spaces.Discrete(4)
         self.observation_space = spaces.Dict(
@@ -35,14 +35,14 @@ class GridWorldCoverRenderEnv(gym.Env):
         return {"agent": self._agent_location}
 
     def _get_info(self):
-        # NOVO: Informa a localização dos obstáculos para o wrapper
+        # Informa a localização dos obstáculos para o wrapper
         return {"size": self.size, "obstacles": self._obstacle_locations}
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
-        self.visited_cells.clear() # Limpa as células visitadas para o render
+        self.visited_cells.clear() # limpa as células visitadas para o render
 
-        # NOVO: Gera obstáculos em posições aleatórias
+        # Gera obstáculos em posições aleatórias
         self._agent_location = self.np_random.integers(0, self.size, size=2, dtype=int)
         self._obstacle_locations = set()
         while len(self._obstacle_locations) < self.num_obstacles:
@@ -65,7 +65,7 @@ class GridWorldCoverRenderEnv(gym.Env):
         info = self._get_info()
         info["hit_obstacle"] = False
 
-        # NOVO: Verifica se o próximo movimento é uma colisão com um obstáculo
+        # Verifica se o próximo movimento é uma colisão com um obstáculo
         if tuple(potential_location) in self._obstacle_locations:
             # O agente não se move e recebe uma flag de colisão
             info["hit_obstacle"] = True
@@ -83,7 +83,7 @@ class GridWorldCoverRenderEnv(gym.Env):
 
         return observation, reward, terminated, truncated, info
     
-    # NOVO: Método para o wrapper atualizar as células visitadas para renderização
+    #  Método para o wrapper atualizar as células visitadas para renderização
     def set_visited_cells(self, visited):
         self.visited_cells = visited
 
@@ -103,18 +103,18 @@ class GridWorldCoverRenderEnv(gym.Env):
         canvas.fill((255, 255, 255))
         pix_square_size = self.window_size / self.size
 
-        # NOVO: Desenha as células já visitadas em cinza claro
+        # Desenha as células já visitadas em cinza claro
         for pos in self.visited_cells:
              pygame.draw.rect(
                 canvas,
-                (220, 220, 220), # Cinza claro
+                (200, 200, 200), # Cinza claro
                 pygame.Rect(
                     pix_square_size * np.array(pos),
                     (pix_square_size, pix_square_size),
                 ),
             )
 
-        # NOVO: Desenha os obstáculos como quadrados pretos
+        # Desenha os obstáculos como quadrados pretos
         for obstacle in self._obstacle_locations:
             pygame.draw.rect(
                 canvas,

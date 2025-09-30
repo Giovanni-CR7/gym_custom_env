@@ -14,7 +14,7 @@ class CoverageWrapper(gym.Wrapper):
     def __init__(self, env):
         super().__init__(env)
         self.grid_size = env.unwrapped.size
-        self.max_steps = self.grid_size * self.grid_size * 2 # Aumentar um pouco pode ser útil
+        self.max_steps = self.grid_size * self.grid_size * 2 
         self.visited = set()
         self.obstacles = set()
         self.current_step = 0
@@ -22,13 +22,13 @@ class CoverageWrapper(gym.Wrapper):
         # Número total de células que podem ser cobertas (será atualizado no reset)
         self.total_coverable_cells = self.grid_size * self.grid_size
 
-        # Redefine observation_space: agora inclui posição do agente + grid visitado + grid de obstáculos
+        # inclui posição do agente + grid visitado + grid de obstáculos
         self.observation_space = gym.spaces.Dict({
             "agent": env.observation_space["agent"],
             "visited": gym.spaces.Box(
                 low=0, high=1, shape=(self.grid_size, self.grid_size), dtype=np.int8
             ),
-            "obstacles": gym.spaces.Box( # NOVO: O agente precisa "ver" os obstáculos
+            "obstacles": gym.spaces.Box( 
                 low=0, high=1, shape=(self.grid_size, self.grid_size), dtype=np.int8
             )
         })
@@ -52,7 +52,7 @@ class CoverageWrapper(gym.Wrapper):
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
         
-        # NOVO: Pega a localização dos obstáculos do ambiente base
+        # Pega a localização dos obstáculos do ambiente base
         self.obstacles = info["obstacles"]
         self.total_coverable_cells = self.grid_size * self.grid_size - len(self.obstacles)
         
@@ -128,7 +128,6 @@ if __name__ == "__main__":
         model.set_logger(logger)
 
         try:
-            # Pode ser necessário mais passos de treino, pois o problema é mais complexo
             model.learn(total_timesteps=1_500_000)
         except KeyboardInterrupt:
             print("\n🛑 Treinamento interrompido pelo usuário.")
