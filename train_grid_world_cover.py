@@ -116,13 +116,9 @@ if __name__ == "__main__":
             env,
             verbose=1,
             device="cpu",
-            ent_coef=0.05,           # Aumentado para mais exploração
-            gamma=0.95,              # Reduzido para foco em recompensas imediatas
-            n_steps=128,             # Reduzido para atualizações mais frequentes
-            batch_size=256,          # Ajustado para melhor aprendizado
-            learning_rate=0.00025,   # Taxa de aprendizado ajustada
-            clip_range=0.2,          # Para maior estabilidade
-        )
+            ent_coef=0.05,           # coeficiente de entropia: incentiva o agente a manter a exploração (tentar mais ações diferentes)
+            gamma=0.95,              # controla o quanto o agente valoriza recompensas futuras (quanto menor, mais valoriza recompensas imediatas)
+            )
 
         logger = configure("log/ppo_coverage_obstacles", ["stdout", "csv", "tensorboard"])
         model.set_logger(logger)
