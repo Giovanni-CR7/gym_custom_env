@@ -158,7 +158,7 @@ def make_env(render_mode=None, size=20, log_dir=None, num_obstacles=40, seed=Non
     if log_dir:
         os.makedirs(log_dir, exist_ok=True) # Cria o diretório se não existir
         # Envolve com Monitor para salvar logs em CSV
-        env = Monitor(env, log_dir, info_keywords=("is_success",)) # 'is_success' é opcional
+        env = Monitor(env, log_dir) # 'is_success' é opcional
     return env
 
 # --- Função de Plotagem ---
