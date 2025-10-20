@@ -150,8 +150,8 @@ class GridWorldCoverRenderEnv(gym.Env):
             # 4. Validar se todas as células livres foram alcançadas
             expected_free_cells = self.size * self.size - self.num_obstacles
             if len(reachable_cells) == expected_free_cells:
-                # if generation_attempts > 1: # Log apenas se não foi na primeira tentativa
-                #      print(f"Mapa válido gerado na tentativa {generation_attempts}.") # Debug opcional
+                if generation_attempts > 1: # Log apenas se não foi na primeira tentativa
+                    print(f"Mapa válido gerado na tentativa {generation_attempts}.") # Debug opcional
                 break # Sai do loop while True, mapa encontrado!
 
             # Se não for válido, o loop continua e tenta gerar novamente
