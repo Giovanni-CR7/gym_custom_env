@@ -246,7 +246,7 @@ if __name__ == "__main__":
             "CnnPolicy",           # Usa a política baseada em CNN
             env,                   # O ambiente envolvido
             verbose=1,             # Imprime informações de progresso
-            device="cpu",          # Mude para "cuda" se tiver GPU NVIDIA configurada
+            device="cuda",          # Mude para "cuda" se tiver GPU NVIDIA configurada
             policy_kwargs=policy_kwargs, # Arquitetura da rede customizada
             ent_coef=0.01,         # Coeficiente de entropia (exploração) - pode ajustar (ex: 0.005)
             learning_rate=5e-5,    # Taxa de aprendizado REDUZIDA
