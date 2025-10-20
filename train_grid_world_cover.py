@@ -193,7 +193,7 @@ if __name__ == "__main__":
     NUM_OBSTACLES = 40
     LOG_DIR = "log/ppo_coverage_20x20"
     MODEL_SAVE_PATH = "data/ppo_coverage_20x20.zip" # Nome do modelo salvo
-    TOTAL_TIMESTEPS = 10_000_000 # Comece com 10M, ajuste se necessário
+    TOTAL_TIMESTEPS = 17_000_000 # Comece com 10M, ajuste se necessário
 
     if train_mode:
         print(f"--- Iniciando Treinamento: Grid {GRID_SIZE}x{GRID_SIZE}, Obstáculos: {NUM_OBSTACLES}, Passos: {TOTAL_TIMESTEPS} ---")
@@ -210,7 +210,7 @@ if __name__ == "__main__":
             "CnnPolicy",
             env,
             verbose=1,
-            device="cpu", # ou cuda para a gpu nvidia
+            device="cuda", # ou cuda para a gpu nvidia
             policy_kwargs=policy_kwargs,
             ent_coef=0.02,
             learning_rate=3e-4, # Pode precisar diminuir se instável (ex: 1e-4)
