@@ -109,6 +109,7 @@ class GridWorldCoverRenderEnv(gym.Env):
         
         # --- INFORMA A ÁREA REALMENTE ACESSÍVEL ---
         info['reachable_cells_count'] = len(reachable_cells)
+        print (f'{360-(len(reachable_cells))} células indisponíveis')
 
         if self.render_mode == "human":
             self._render_frame()
