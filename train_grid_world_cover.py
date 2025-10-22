@@ -95,9 +95,9 @@ class CoverageWrapper(gym.Wrapper):
         # --- SISTEMA DE RECOMPENSAS---
         reward = -0.005  
 
-        if hit_obstacle:
-            reward += -0.05  
-        elif agent_pos is not None:
+        #if hit_obstacle:
+           # reward += -0.05  
+        if agent_pos is not None:
             if agent_pos not in self.visited:
                 self.visited.add(agent_pos)
                 coverage_ratio = len(self.visited) / self.total_coverable_cells
