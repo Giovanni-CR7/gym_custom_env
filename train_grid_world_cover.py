@@ -349,17 +349,17 @@ if __name__ == "__main__":
             policy_kwargs=policy_kwargs,
 
             # parâmetros de exploração
-            ent_coef=0.02,  # aumentado para mais exploração
+            ent_coef=0.05,  # aumentado para mais exploração
 
             # Taxa de aprendizado com schedule (decai ao longo do tempo)
             learning_rate=lambda f: 3e-4 * f,  # Começa em 3e-4 e decai linearmente
 
             # Desconto temporal
-            gamma=0.99,
+            gamma=0.999,
 
             # Coleta de experiência (CRITICAL FIX)
-            n_steps=512,  # coleta os dados em blocos de 512 passos
-            batch_size=64,  # Proporcional ao n_steps
+            n_steps=2048,  # coleta os dados em blocos de 512 passos
+            batch_size=256,  # Proporcional ao n_steps
             n_epochs=10,  # responsável por quantas vezes o modelo vê cada dado coletado
 
             # Clipping
