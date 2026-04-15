@@ -78,11 +78,12 @@ class CoverageWrapper(gym.Wrapper):
         self.current_step = 0
 
         # --- Recompensas Estáticas e Claras ---
-        self.reward_new_cell     = 1.0    # Bom menino, achou sujeira
-        self.reward_step_cost    = -0.01  # Anda logo, o tempo tá passando
-        self.reward_revisit      = -0.05  # Já limpou aqui, vá para outro lado
-        self.reward_hit_obstacle = -0.5   # Bater na parede dói
-        self.reward_completion   = 50.0   # Limpou tudo, parabéns!
+        # --- Lógica de Recompensa Ajustada ---
+        self.reward_new_cell     = 1.0    
+        self.reward_step_cost    = -0.01  
+        self.reward_revisit      = -0.15  
+        self.reward_hit_obstacle = -0.1   
+        self.reward_completion   = 50.0   
 
         return self._get_obs(obs), info
 
@@ -328,14 +329,14 @@ if __name__ == "__main__":
             device="cuda",
             policy_kwargs=policy_kwargs,
             
-            ent_coef=0.0,          # Reduza para ZERO. Deixe o agente focar 100% no valor das recompensas
+            ent_coef=0.01,         # VOLTOU PARA 0.01: Obriga o agente a não ter tanta certeza assim e explorar
             learning_rate=3e-4, 
             gamma=0.99,
-            n_steps=1024,          # Diminua um pouco o n_steps para ele atualizar a política mais rápido
-            batch_size=128,        # Proporcional ao n_steps
+            n_steps=1024,          
+            batch_size=128,        
             n_epochs=10, 
             
-            vf_coef=0.6,           # Aumente de 0.5 (padrão) para 0.6. Dá mais importância para prever o valor do estado
+            vf_coef=0.6,           
             clip_range=0.2,
             max_grad_norm=0.5,
             tensorboard_log=LOG_DIR
