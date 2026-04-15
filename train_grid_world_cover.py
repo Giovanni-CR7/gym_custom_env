@@ -320,7 +320,7 @@ if __name__ == "__main__":
             net_arch=dict(pi=[256, 128], vf=[256, 128])
         )
 
-        # --- HIPERPARÂMETROS ---
+        # --- HIPERPARÂMETROS OTIMIZADOS ---
         model = PPO(
             "CnnPolicy",
             env,
@@ -328,14 +328,14 @@ if __name__ == "__main__":
             device="cuda",
             policy_kwargs=policy_kwargs,
             
-            # --- Ajustes Críticos ---
-            ent_coef=0.01,         # Reduzido para focar na melhor rota em vez de aleatoriedade
-            learning_rate=3e-4,    # Fixa em 3e-4 (muito mais seguro que decaimento no início)
-            gamma=0.99,            # Reduzido de 0.999 para 0.99 para dar mais peso a recompensas imediatas
-            n_steps=2048,
-            batch_size=256,
-            n_epochs=10,           # Aumentado para o modelo aprender mais com os batches coletados
+            ent_coef=0.0,          # Reduza para ZERO. Deixe o agente focar 100% no valor das recompensas
+            learning_rate=3e-4, 
+            gamma=0.99,
+            n_steps=1024,          # Diminua um pouco o n_steps para ele atualizar a política mais rápido
+            batch_size=128,        # Proporcional ao n_steps
+            n_epochs=10, 
             
+            vf_coef=0.6,           # Aumente de 0.5 (padrão) para 0.6. Dá mais importância para prever o valor do estado
             clip_range=0.2,
             max_grad_norm=0.5,
             tensorboard_log=LOG_DIR
