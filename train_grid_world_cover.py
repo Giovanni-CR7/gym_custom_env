@@ -352,7 +352,7 @@ if __name__ == "__main__":
             ent_coef=0.05,  # aumentado para mais exploração
 
             # Taxa de aprendizado com schedule (decai ao longo do tempo)
-            learning_rate=lambda f: 3e-4 * f,  # Começa em 3e-4 e decai linearmente
+            learning_rate=lambda f: 1e-4 * f,  # Começa em 1e-4 e decai linearmente
 
             # Desconto temporal
             gamma=0.999,
@@ -360,10 +360,10 @@ if __name__ == "__main__":
             # Coleta de experiência (CRITICAL FIX)
             n_steps=2048,  # coleta os dados em blocos de 512 passos
             batch_size=256,  # Proporcional ao n_steps
-            n_epochs=10,  # responsável por quantas vezes o modelo vê cada dado coletado
+            n_epochs=5,  # responsável por quantas vezes o modelo vê cada dado coletado
 
             # Clipping
-            clip_range=0.2,
+            clip_range=0.15,  # Clipping mais conservador para estabilidade
             clip_range_vf=None,  # Sem clipping na value function
 
             # Otimizador
