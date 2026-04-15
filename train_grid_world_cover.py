@@ -302,8 +302,8 @@ if __name__ == "__main__":
         pass
 
     # --- PARÂMETROS GLOBAIS ---
-    GRID_SIZE = 20
-    NUM_OBSTACLES = 40
+    GRID_SIZE = 7
+    NUM_OBSTACLES = 5
     LOG_DIR = f"log/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}"
     MODEL_SAVE_PATH = f"data/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}.zip"
     TOTAL_TIMESTEPS = 10_000_000
