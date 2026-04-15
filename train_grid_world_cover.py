@@ -26,15 +26,22 @@ class CustomCnn(BaseFeaturesExtractor):
         self.cnn = nn.Sequential(
             nn.Conv2d(c, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(2), # Comprime o grid pela metade (20x20 -> 10x10)
+            
             nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
+            nn.MaxPool2d(2), # Comprime novamente (10x10 -> 5x5)
+            
             nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
             nn.Flatten()
         )
+        
+        # Calcula automaticamente o tamanho pós-flatten (deve cair para ~3200)
         with th.no_grad():
             sample = th.as_tensor(np.zeros((1, c, h, w), dtype=np.float32))
             n_flatten = self.cnn(sample).shape[1]
+            
         self.linear = nn.Sequential(nn.Linear(n_flatten, features_dim), nn.ReLU())
 
     def forward(self, observations: th.Tensor) -> th.Tensor:
@@ -70,24 +77,12 @@ class CoverageWrapper(gym.Wrapper):
 
         self.current_step = 0
 
-        # --- Recompensas normalizadas: tudo relativo ao número de células alcançáveis ---
-        N = self.total_coverable_cells
-
-        # Cada célula nova vale uma fração do bônus de conclusão
-        # → descobrir todas as células equivale a ~50% do bônus de conclusão
-        self.reward_new_cell     = 50.0 / N      # ex: 49 células → ~1.02 por célula
-
-        # Penalidade por revisitar: pequena o suficiente pra não paralisar o agente
-        self.reward_revisit      = -self.reward_new_cell * 0.1
-
-        # Custo por passo: incentiva eficiência sem punir exploração
-        self.reward_step_cost    = -self.reward_new_cell * 0.05
-
-        # Bônus ao completar: significativo, mas não obscurece o aprendizado incremental
-        self.reward_completion   = 100.0
-
-        # Bônus parcial ao truncar: proporcional à cobertura, teto em 50% do bônus de conclusão
-        self.reward_truncation_max = 50.0
+        # --- Recompensas Estáticas e Claras ---
+        self.reward_new_cell     = 1.0    # Bom menino, achou sujeira
+        self.reward_step_cost    = -0.01  # Anda logo, o tempo tá passando
+        self.reward_revisit      = -0.05  # Já limpou aqui, vá para outro lado
+        self.reward_hit_obstacle = -0.5   # Bater na parede dói
+        self.reward_completion   = 50.0   # Limpou tudo, parabéns!
 
         return self._get_obs(obs), info
 
@@ -95,54 +90,39 @@ class CoverageWrapper(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(action)
         self.current_step += 1
 
-        # Localiza agente
         pos = np.argwhere(obs[2] == 1.0)
         agent_pos = None
         if pos.shape[0] > 0:
             agent_pos = (int(pos[0, 0]), int(pos[0, 1]))
-        else:
-            try:
-                agent_pos = tuple(self.env.unwrapped._agent_location)
-            except Exception:
-                pass
 
-        # --- Recompensa base: custo de existir incentiva eficiência ---
+        # --- Lógica de Recompensa Simplificada ---
         reward = self.reward_step_cost
+
+        # Pune fortemente colisões em obstáculos e bordas
+        if info.get("hit_obstacle", False):
+            reward += self.reward_hit_obstacle
 
         if agent_pos is not None:
             if agent_pos not in self.visited:
                 self.visited.add(agent_pos)
-                coverage_ratio = len(self.visited) / self.total_coverable_cells
-
-                # Recompensa de descoberta com bônus progressivo nas últimas células
-                # (incentiva "fechar" a cobertura e não parar em 80%)
-                discovery_bonus = 1.0 + coverage_ratio  # vai de 1.0x a 2.0x
-                reward += self.reward_new_cell * discovery_bonus
+                reward += self.reward_new_cell
             else:
                 reward += self.reward_revisit
 
-        coverage_ratio = (
-            len(self.visited) / self.total_coverable_cells
-            if self.total_coverable_cells > 0 else 0
-        )
+        coverage_ratio = len(self.visited) / self.total_coverable_cells if self.total_coverable_cells > 0 else 0
 
-        # --- Condições de término ---
-
-        # Sucesso: cobertura completa
+        # Condição de vitória
         if coverage_ratio >= 0.98:
             terminated = True
             reward += self.reward_completion
             print(f"✅ Cobertura completa! {len(self.visited)}/{self.total_coverable_cells} ({coverage_ratio*100:.1f}%)")
-
+        
         # Limite de passos
         elif self.current_step >= self.max_steps:
             truncated = True
-            # Bônus proporcional, mas só relevante perto de 100%
-            # coverage_ratio² penaliza coberturas baixas e premia coberturas altas
-            reward += (coverage_ratio ** 2) * self.reward_truncation_max
 
         if agent_pos is not None:
-            obs[3, agent_pos[0], agent_pos[1]] = 1.0
+            obs[3, agent_pos[0], agent_pos[1]] = 1.0 # Atualiza mapa de visitados
 
         return self._get_obs(obs), float(reward), bool(terminated), bool(truncated), info
 
@@ -345,31 +325,19 @@ if __name__ == "__main__":
             "CnnPolicy",
             env,
             verbose=1,
-            device="cuda",  # cpu ou cuda
+            device="cuda",
             policy_kwargs=policy_kwargs,
-
-            # parâmetros de exploração
-            ent_coef=0.05,  # aumentado para mais exploração
-
-            # Taxa de aprendizado com schedule (decai ao longo do tempo)
-            learning_rate=lambda f: 1e-4 * f,  # Começa em 1e-4 e decai linearmente
-
-            # Desconto temporal
-            gamma=0.999,
-
-            # Coleta de experiência (CRITICAL FIX)
-            n_steps=2048,  # coleta os dados em blocos de 512 passos
-            batch_size=256,  # Proporcional ao n_steps
-            n_epochs=5,  # responsável por quantas vezes o modelo vê cada dado coletado
-
-            # Clipping
-            clip_range=0.15,  # Clipping mais conservador para estabilidade
-            clip_range_vf=None,  # Sem clipping na value function
-
-            # Otimizador
+            
+            # --- Ajustes Críticos ---
+            ent_coef=0.01,         # Reduzido para focar na melhor rota em vez de aleatoriedade
+            learning_rate=3e-4,    # Fixa em 3e-4 (muito mais seguro que decaimento no início)
+            gamma=0.99,            # Reduzido de 0.999 para 0.99 para dar mais peso a recompensas imediatas
+            n_steps=2048,
+            batch_size=256,
+            n_epochs=10,           # Aumentado para o modelo aprender mais com os batches coletados
+            
+            clip_range=0.2,
             max_grad_norm=0.5,
-
-            # Logging
             tensorboard_log=LOG_DIR
         )
 
