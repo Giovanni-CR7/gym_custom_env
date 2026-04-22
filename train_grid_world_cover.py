@@ -332,12 +332,12 @@ if __name__ == "__main__":
         pass
 
     # ── Parâmetros globais ────────────────────────────────────────────────────
-    GRID_SIZE      = 7
-    NUM_OBSTACLES  = 5
+    GRID_SIZE      = 10
+    NUM_OBSTACLES  = 20
     N_ENVS         = 8          # FIX: paralelismo — acelera muito o treinamento
     LOG_DIR        = f"log/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}"
     MODEL_SAVE_PATH = f"data/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}.zip"
-    TOTAL_TIMESTEPS = 1_000_000  # 1M é suficiente para grid 7×7 com fixes
+    TOTAL_TIMESTEPS = 7_000_000  
 
     # ── TRAIN ─────────────────────────────────────────────────────────────────
     if mode == "train":
