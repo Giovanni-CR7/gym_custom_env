@@ -91,7 +91,7 @@ class CoverageWrapper(gym.Wrapper):
         # Recompensas
         self.reward_new_cell     =  1.0
         self.reward_step_cost    = -0.005
-        self.reward_revisit      = -0.05
+        self.reward_revisit      = -0.07
         self.reward_hit_obstacle = -0.2
         self.reward_completion   =  20.0
 
@@ -125,9 +125,9 @@ class CoverageWrapper(gym.Wrapper):
         if coverage_ratio >= 0.98:
             terminated = True
             reward += self.reward_completion
-            print(f"✅ Cobertura completa! "
-                  f"{len(self.visited)}/{self.total_coverable_cells} "
-                  f"({coverage_ratio*100:.1f}%)")
+            # print(f"✅ Cobertura completa! "
+            #       f"{len(self.visited)}/{self.total_coverable_cells} "
+            #       f"({coverage_ratio*100:.1f}%)")
 
         elif self.current_step >= self.max_steps:
             truncated = True

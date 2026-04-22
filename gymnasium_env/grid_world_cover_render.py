@@ -139,7 +139,7 @@ class GridWorldCoverRenderEnv(gym.Env):
         info = self._get_info()
         info["reachable_cells_count"] = len(reachable)
 
-        print(f"{self.size * self.size - len(reachable)} células indisponíveis")
+        #print(f"{self.size * self.size - len(reachable)} células indisponíveis")
 
         if self.render_mode == "human":
             self._render_frame()
