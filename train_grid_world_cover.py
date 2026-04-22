@@ -369,7 +369,7 @@ if __name__ == "__main__":
                 net_arch=dict(pi=[256, 256], vf=[256, 256]),
             ),
             # ── Hiperparâmetros ───────────────────────────────────────────────
-            ent_coef=0.01,
+            ent_coef=0.03,
             learning_rate=3e-4,
             gamma=0.99,
             n_steps=1024,
