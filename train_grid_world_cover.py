@@ -359,11 +359,12 @@ if __name__ == "__main__":
         )
 
         # FIX: MlpPolicy — sem CNN, sem MaxPool, sem perda de informação espacial
+        # MlpPolicy é mais rápida na CPU (SB3 avisa isso explicitamente para não-CNN)
         model = PPO(
             "MlpPolicy",
             vec_env,
             verbose=1,
-            device="auto",          # usa GPU se disponível, senão CPU
+            device="cpu",
             policy_kwargs=dict(
                 net_arch=dict(pi=[256, 256], vf=[256, 256]),
             ),
@@ -396,6 +397,7 @@ if __name__ == "__main__":
         except KeyboardInterrupt:
             print("\n🛑 Treinamento interrompido pelo usuário.")
         finally:
+            os.makedirs("data", exist_ok=True)  # garante que existe mesmo após crash
             model.save(MODEL_SAVE_PATH)
             print(f"✅ Modelo salvo em {MODEL_SAVE_PATH}")
             plot_results(LOG_DIR, grid_size=GRID_SIZE, num_obstacles=NUM_OBSTACLES)
