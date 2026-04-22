@@ -79,6 +79,7 @@ class CoverageWrapper(gym.Wrapper):
         self.total_coverable_cells = info.get("reachable_cells_count", self._h * self._w)
         self.visited = set()
         self.current_step = 0
+        self.prev_coverage_ratio = 0.0  # para reward shaping denso
 
         # Posição inicial do agente
         agent_pos = self._get_agent_pos(obs)
@@ -91,7 +92,7 @@ class CoverageWrapper(gym.Wrapper):
         # Recompensas
         self.reward_new_cell     =  1.0
         self.reward_step_cost    = -0.005
-        self.reward_revisit      = -0.07
+        self.reward_revisit      = -0.05
         self.reward_hit_obstacle = -0.2
         self.reward_completion   =  20.0
 
@@ -121,13 +122,20 @@ class CoverageWrapper(gym.Wrapper):
             if self.total_coverable_cells > 0 else 0.0
         )
 
+        # ── Reward shaping denso (resolve horizonte longo) ────────────────────
+        # Com gamma=0.995 e 1000 passos, o bônus de conclusão chega descontado
+        # a quase zero no início do episódio. Este sinal dá feedback proporcional
+        # ao progresso a cada passo, mantendo o gradiente sempre informativo.
+        reward += (coverage_ratio - self.prev_coverage_ratio) * 5.0
+        self.prev_coverage_ratio = coverage_ratio
+
         # Condição de vitória
         if coverage_ratio >= 0.98:
             terminated = True
             reward += self.reward_completion
-            # print(f"✅ Cobertura completa! "
-            #       f"{len(self.visited)}/{self.total_coverable_cells} "
-            #       f"({coverage_ratio*100:.1f}%)")
+            print(f"✅ Cobertura completa! "
+                  f"{len(self.visited)}/{self.total_coverable_cells} "
+                  f"({coverage_ratio*100:.1f}%)")
 
         elif self.current_step >= self.max_steps:
             truncated = True
@@ -198,7 +206,7 @@ def make_env(render_mode=None, size=None, log_dir=None,
     if size is None or num_obstacles is None:
         raise ValueError("Passe 'size' e 'num_obstacles' para make_env().")
 
-    max_steps = max(1000, size * size * 10)
+    max_steps = max(1000, size * size * 10)  # mais fôlego para grids maiores
 
     env = GridWorldCoverRenderEnv(
         size=size,
@@ -337,7 +345,7 @@ if __name__ == "__main__":
     N_ENVS         = 8          # FIX: paralelismo — acelera muito o treinamento
     LOG_DIR        = f"log/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}"
     MODEL_SAVE_PATH = f"data/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}.zip"
-    TOTAL_TIMESTEPS = 7_000_000  
+    TOTAL_TIMESTEPS = 7_000_000  # 7M para grid 10×10
 
     # ── TRAIN ─────────────────────────────────────────────────────────────────
     if mode == "train":
@@ -369,9 +377,9 @@ if __name__ == "__main__":
                 net_arch=dict(pi=[256, 256], vf=[256, 256]),
             ),
             # ── Hiperparâmetros ───────────────────────────────────────────────
-            ent_coef=0.03,
+            ent_coef=0.03,  # exploração aumentada para grid maior
             learning_rate=3e-4,
-            gamma=0.99,
+            gamma=0.995,  # FIX: horizonte mais longo para episódios de ~1000 passos
             n_steps=1024,
             batch_size=256,
             n_epochs=10,
