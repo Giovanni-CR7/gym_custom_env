@@ -198,7 +198,7 @@ def make_env(render_mode=None, size=None, log_dir=None,
     if size is None or num_obstacles is None:
         raise ValueError("Passe 'size' e 'num_obstacles' para make_env().")
 
-    max_steps = max(500, size * size * 6)
+    max_steps = max(1000, size * size * 10)
 
     env = GridWorldCoverRenderEnv(
         size=size,
