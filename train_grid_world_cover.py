@@ -114,7 +114,7 @@ class CoverageWrapper(gym.Wrapper):
         ap = self._agent_pos(obs)
 
         # ── Recompensa ────────────────────────────────────────────────────────
-        reward = -0.01  # custo de passo
+        reward = -0.01  # custo de passo (desencoraja loops infinitos)
 
         if info.get("hit_obstacle", False):
             reward -= 0.3  # penalidade clara por bater em obstáculo
@@ -122,9 +122,11 @@ class CoverageWrapper(gym.Wrapper):
         if ap is not None:
             if ap not in self.visited:
                 self.visited.add(ap)
-                reward += 2.0   # sinal forte e claro por célula nova
-            else:
-                reward -= 0.1   # revisita penalizada levemente
+                reward += 3.0   # sinal forte por célula nova
+            # SEM penalidade de revisita: o agente precisa atravessar células
+            # já visitadas para chegar em regiões inexploradas. Penalizar isso
+            # torna a exploração de longa distância não-lucrativa e o agente
+            # aprende a ficar em clusters locais em vez de avançar.
 
         coverage = len(self.visited) / self.total_coverable_cells if self.total_coverable_cells > 0 else 0.0
 
