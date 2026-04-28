@@ -1,6 +1,5 @@
-# python train_grid_world_cover.py train     # treino do zero
-# python train_grid_world_cover.py finetune  # continua do melhor checkpoint
-# python train_grid_world_cover.py test      # testa o modelo salvo
+# python train_grid_world_cover.py train  # treinar
+# python train_grid_world_cover.py test   # testar
 
 import sys
 import gymnasium as gym
@@ -21,46 +20,113 @@ from gymnasium_env.grid_world_cover_render import GridWorldCoverRenderEnv
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CNN SEM MaxPool
+# PARÂMETROS GLOBAIS
 # ─────────────────────────────────────────────────────────────────────────────
-class SmallGridCNN(BaseFeaturesExtractor):
+GRID_SIZE       = 20
+NUM_OBSTACLES   = 40
+VISION_RADIUS   = 2          # visão 5×5 = agente ± 2 células em cada direção
+N_ENVS          = 8
+LOG_DIR         = f"log/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}"
+MODEL_PATH      = f"data/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}.zip"
+TOTAL_TIMESTEPS = 20_000_000  # 20M para grid 20×20
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CNN para 20×20 — stride=2 na camada do meio em vez de MaxPool
+# MaxPool(2) em sequência destruiria resolução; stride controlado preserva.
+# ─────────────────────────────────────────────────────────────────────────────
+class GridCNN(BaseFeaturesExtractor):
+    """
+    Entrada: (4, 20, 20)
+    Conv1 stride=1 → (32, 20, 20)
+    Conv2 stride=2 → (64, 10, 10)   ← única redução, ainda informativa
+    Conv3 stride=1 → (64, 10, 10)
+    Flatten → 6400 → Linear(256)
+    """
     def __init__(self, observation_space, features_dim=256):
         super().__init__(observation_space, features_dim)
         c, h, w = observation_space.shape
 
         self.cnn = nn.Sequential(
-            nn.Conv2d(c, 32, kernel_size=3, padding=1),
+            nn.Conv2d(c,  32, kernel_size=3, padding=1, stride=1),
             nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=3, padding=1),
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, stride=2),
             nn.ReLU(),
-            nn.Conv2d(64, 64, kernel_size=3, padding=1),
+            nn.Conv2d(64, 64, kernel_size=3, padding=1, stride=1),
             nn.ReLU(),
             nn.Flatten(),
         )
         with th.no_grad():
             n_flat = self.cnn(th.zeros(1, c, h, w)).shape[1]
-        self.linear = nn.Sequential(nn.Linear(n_flat, features_dim), nn.ReLU())
+
+        self.linear = nn.Sequential(
+            nn.Linear(n_flat, features_dim),
+            nn.ReLU(),
+        )
 
     def forward(self, obs: th.Tensor) -> th.Tensor:
         return self.linear(self.cnn(obs))
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Wrapper de Cobertura
+# WRAPPER — visão parcial 5×5 + mapa global de visitados
 # ─────────────────────────────────────────────────────────────────────────────
 class CoverageWrapper(gym.Wrapper):
+    """
+    Observação: 4 canais × 20×20
+      Canal 0: espaço livre   — apenas células dentro da janela 5×5 reveladas
+      Canal 1: obstáculos     — apenas células dentro da janela 5×5 reveladas
+      Canal 2: posição global do agente (sempre completo)
+      Canal 3: mapa global de visitados (sempre completo)
 
-    def __init__(self, env):
+    Isso simula um agente com sensor local de 5×5 e memória de mapa global
+    (equivalente a SLAM simplificado), que é o setup realista para cobertura.
+    """
+
+    def __init__(self, env, vision_radius: int = 2):
         super().__init__(env)
-        self.grid_size    = env.observation_space.shape[1]
-        self.max_steps    = env.max_steps
-        self.observation_space = env.observation_space
+        self.vision_radius = vision_radius
+        self.grid_size     = env.observation_space.shape[1]
+        self.max_steps     = env.max_steps
+
+        self.observation_space = env.observation_space   # (4, H, W) — sem alterar
         self.action_space      = env.action_space
 
-        self.visited: set         = set()
+        # Estado interno
+        self.visited:   set = set()
+        self.revealed:  set = set()   # células já vistas pelo sensor 5×5
         self.total_coverable_cells: int = 0
-        self.current_step: int    = 0
-        self.prev_coverage: float = 0.0
+        self.current_step:   int   = 0
+        self.prev_coverage:  float = 0.0
+
+    # ── helpers ───────────────────────────────────────────────────────────────
+
+    def _agent_pos(self, obs: np.ndarray):
+        pos = np.argwhere(obs[2] == 1.0)
+        return (int(pos[0, 0]), int(pos[0, 1])) if len(pos) > 0 else None
+
+    def _update_revealed(self, ar: int, ac: int):
+        """Marca como reveladas todas as células dentro da janela 5×5."""
+        r0 = max(0, ar - self.vision_radius)
+        r1 = min(self.grid_size - 1, ar + self.vision_radius)
+        c0 = max(0, ac - self.vision_radius)
+        c1 = min(self.grid_size - 1, ac + self.vision_radius)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                self.revealed.add((r, c))
+
+    def _apply_fog(self, obs: np.ndarray) -> np.ndarray:
+        """
+        Canais 0 e 1: mostra apenas células já reveladas pelo sensor 5×5.
+        Canais 2 e 3: mantém informação global (agente + visitados).
+        """
+        out = np.zeros_like(obs)
+        for (r, c) in self.revealed:
+            out[0, r, c] = obs[0, r, c]
+            out[1, r, c] = obs[1, r, c]
+        out[2] = obs[2]   # posição global do agente
+        out[3] = obs[3]   # mapa global de visitados
+        return out
 
     def _rebuild_visited_channel(self, obs: np.ndarray) -> np.ndarray:
         obs[3] = 0.0
@@ -68,66 +134,70 @@ class CoverageWrapper(gym.Wrapper):
             obs[3, r, c] = 1.0
         return obs
 
-    @staticmethod
-    def _agent_pos(obs: np.ndarray):
-        pos = np.argwhere(obs[2] == 1.0)
-        return (int(pos[0, 0]), int(pos[0, 1])) if len(pos) > 0 else None
+    # ── gym API ───────────────────────────────────────────────────────────────
 
     def reset(self, **kwargs):
         obs, info = self.env.reset(**kwargs)
-        self.total_coverable_cells = info.get("reachable_cells_count",
-                                               obs.shape[1] * obs.shape[2])
+        self.total_coverable_cells = info.get(
+            "reachable_cells_count", self.grid_size * self.grid_size
+        )
         self.visited      = set()
+        self.revealed     = set()
         self.current_step = 0
         self.prev_coverage = 0.0
 
         ap = self._agent_pos(obs)
         if ap:
             self.visited.add(ap)
+            self._update_revealed(ap[0], ap[1])
 
         obs = self._rebuild_visited_channel(obs)
+        obs = self._apply_fog(obs)
         return obs.copy(), info
 
     def step(self, action):
         obs, _, terminated, truncated, info = self.env.step(action)
         self.current_step += 1
+
         ap = self._agent_pos(obs)
 
-        # ── Recompensa base ───────────────────────────────────────────────────
-        reward = -0.01  # step cost
+        # Atualiza célula visitada e área revelada pelo sensor
+        if ap is not None:
+            self.visited.add(ap)
+            self._update_revealed(ap[0], ap[1])
+
+        # ── Recompensa ────────────────────────────────────────────────────────
+        reward = -0.01   # step cost
 
         if info.get("hit_obstacle", False):
             reward -= 0.3
 
-        if ap is not None and ap not in self.visited:
-            self.visited.add(ap)
-            reward += 3.0
-
         coverage = (len(self.visited) / self.total_coverable_cells
                     if self.total_coverable_cells > 0 else 0.0)
 
-        # ── MELHORIA 1: Shaping progressivo ──────────────────────────────────
-        # Quanto mais próximo de 100%, mais valiosa é cada célula nova.
-        # Na última célula (coverage=0.98→0.99): multiplicador ≈ 4.9×
-        # Na primeira célula (coverage=0→0.01):  multiplicador ≈ 1.0×
+        # Shaping progressivo: células novas perto de 100% valem até 5× mais
         progress = coverage - self.prev_coverage
-        progressive_multiplier = 1.0 + coverage * 4.0
-        reward += progress * 10.0 * progressive_multiplier
+        multiplier = 1.0 + coverage * 4.0
+        reward += progress * 10.0 * multiplier
         self.prev_coverage = coverage
 
-        # ── Vitória ───────────────────────────────────────────────────────────
+        # Bônus por célula nova (sinal esparso adicional)
+        if ap is not None and progress > 0:
+            reward += 2.0
+
+        # Vitória
         if coverage >= 0.98:
             terminated = True
-            # MELHORIA 2: Bônus de eficiência — premia terminar mais rápido
             efficiency = (self.max_steps - self.current_step) / self.max_steps
-            reward += 50.0 + efficiency * 20.0  # até +20 extra por velocidade
+            reward += 50.0 + efficiency * 30.0
             print(f"✅ {len(self.visited)}/{self.total_coverable_cells} "
                   f"({coverage*100:.1f}%) em {self.current_step} passos")
-
         elif self.current_step >= self.max_steps:
             truncated = True
 
+        # Reconstrói canais globais e aplica fog of war
         obs = self._rebuild_visited_channel(obs)
+        obs = self._apply_fog(obs)
         return obs.copy(), float(reward), bool(terminated), bool(truncated), info
 
 
@@ -144,19 +214,19 @@ class CoverageLoggerCallback(BaseCallback):
         for i, done in enumerate(self.locals.get("dones", [])):
             if done:
                 try:
-                    wrapper = self.training_env.envs[i]
-                    while hasattr(wrapper, "env") and not isinstance(wrapper, CoverageWrapper):
-                        wrapper = wrapper.env
-                    if isinstance(wrapper, CoverageWrapper) and wrapper.total_coverable_cells > 0:
-                        v = len(wrapper.visited)
-                        t = wrapper.total_coverable_cells
+                    w = self.training_env.envs[i]
+                    while hasattr(w, "env") and not isinstance(w, CoverageWrapper):
+                        w = w.env
+                    if isinstance(w, CoverageWrapper) and w.total_coverable_cells > 0:
+                        v = len(w.visited)
+                        t = w.total_coverable_cells
                         self._records.append({
-                            "timestep":     self.num_timesteps,
-                            "episode":      len(self._records) + 1,
+                            "timestep":      self.num_timesteps,
+                            "episode":       len(self._records) + 1,
                             "coverage_rate": v / t,
-                            "visited":      v,
-                            "total":        t,
-                            "steps":        wrapper.current_step,
+                            "visited":       v,
+                            "total":         t,
+                            "steps":         w.current_step,
                         })
                 except Exception:
                     pass
@@ -171,7 +241,9 @@ class CoverageLoggerCallback(BaseCallback):
 # ─────────────────────────────────────────────────────────────────────────────
 # Factory
 # ─────────────────────────────────────────────────────────────────────────────
-def make_env(size, num_obstacles, render_mode=None, log_dir=None, seed=None):
+def make_env(size, num_obstacles, vision_radius=2,
+             render_mode=None, log_dir=None, seed=None):
+    # Para 20×20: 6000 passos máximos (15× o número de células)
     max_steps = size * size * 15
     env = GridWorldCoverRenderEnv(
         size=size,
@@ -180,7 +252,7 @@ def make_env(size, num_obstacles, render_mode=None, log_dir=None, seed=None):
         seed=seed,
         max_steps=max_steps,
     )
-    env = CoverageWrapper(env)
+    env = CoverageWrapper(env, vision_radius=vision_radius)
     if log_dir:
         os.makedirs(log_dir, exist_ok=True)
         env = Monitor(env, log_dir)
@@ -192,20 +264,19 @@ def make_env(size, num_obstacles, render_mode=None, log_dir=None, seed=None):
 # ─────────────────────────────────────────────────────────────────────────────
 def plot_results(log_dir, grid_size=None, num_obstacles=None):
     try:
-        suffix = (f" — Grid {grid_size}×{grid_size}, {num_obstacles} obstáculos"
+        suffix = (f" — Grid {grid_size}×{grid_size}, {num_obstacles} obs."
                   if grid_size else "")
         mfiles = [f for f in os.listdir(log_dir) if f.endswith("monitor.csv")]
         if not mfiles:
-            print("⚠️  Nenhum monitor.csv encontrado.")
+            print("⚠️  Nenhum monitor.csv.")
             return
-
         mdata = pd.read_csv(os.path.join(log_dir, mfiles[0]), skiprows=1)
         if mdata.empty or "r" not in mdata.columns:
-            print("⚠️  monitor.csv vazio.")
             return
 
         cpath = os.path.join(log_dir, "coverage_log.csv")
         cdata = pd.read_csv(cpath) if os.path.exists(cpath) else None
+        has_cov = cdata is not None and not cdata.empty
 
         def smooth(s, w):
             m   = s.rolling(w, min_periods=1).mean()
@@ -213,72 +284,48 @@ def plot_results(log_dir, grid_size=None, num_obstacles=None):
             ci  = 1.96 * std / np.sqrt(w)
             return m, m - ci, m + ci
 
-        has_cov = cdata is not None and not cdata.empty
-        has_steps = has_cov and "steps" in cdata.columns
-        n_panels = 2 + int(has_cov) + int(has_steps)
         W = max(20, len(mdata) // 20)
-
-        fig = plt.figure(figsize=(14, 5 * n_panels))
-        fig.suptitle(f"Métricas — PPO{suffix}", fontsize=15,
-                     fontweight="bold", y=1.01)
-        gs = gridspec.GridSpec(n_panels, 1, hspace=0.45)
-        panel = 0
-
-        # Painel: Recompensa
-        ax = fig.add_subplot(gs[panel]); panel += 1
+        n = 3 if has_cov else 2
+        fig = plt.figure(figsize=(14, 5 * n))
+        fig.suptitle(f"PPO — Cobertura 20×20 com Visão 5×5{suffix}",
+                     fontsize=14, fontweight="bold", y=1.01)
+        gs = gridspec.GridSpec(n, 1, hspace=0.45)
         ep = mdata.index + 1
-        r  = mdata["r"]
+
+        ax = fig.add_subplot(gs[0])
+        r = mdata["r"]
         m, lo, hi = smooth(r, W)
-        ax.scatter(ep, r, color="steelblue", alpha=0.15, s=8)
+        ax.scatter(ep, r, color="steelblue", alpha=0.15, s=6)
         ax.plot(ep, m, color="steelblue", lw=2, label=f"Média ({W} ep.)")
         ax.fill_between(ep, lo, hi, alpha=0.2, color="steelblue")
         ax.axhline(r.max(), color="green", ls="--", lw=1, alpha=0.6,
                    label=f"Máx: {r.max():.1f}")
-        ax.set_title("Recompensa", fontweight="bold")
+        ax.set_title("Recompensa por Episódio", fontweight="bold")
         ax.set_xlabel("Episódio"); ax.set_ylabel("Recompensa")
         ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
-        # Painel: Coverage Rate
         if has_cov:
-            ax = fig.add_subplot(gs[panel]); panel += 1
+            ax = fig.add_subplot(gs[1])
             cv  = cdata["coverage_rate"] * 100
             cep = cdata["episode"]
             cw  = max(10, len(cv) // 20)
             m, lo, hi = smooth(cv, cw)
-            ax.scatter(cep, cv, color="darkorange", alpha=0.2, s=8)
+            ax.scatter(cep, cv, color="darkorange", alpha=0.2, s=6)
             ax.plot(cep, m, color="darkorange", lw=2, label=f"Média ({cw} ep.)")
             ax.fill_between(cep, lo, hi, alpha=0.2, color="darkorange")
-            ax.axhline(98, color="red", ls="--", lw=1, alpha=0.5,
-                       label="Meta: 98%")
+            ax.axhline(98, color="red", ls="--", lw=1, alpha=0.6, label="Meta 98%")
             ax.set_ylim(0, 105)
             ax.set_title("Coverage Rate (%)", fontweight="bold")
             ax.set_xlabel("Episódio"); ax.set_ylabel("Cobertura (%)")
             ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
-        # Painel: Passos por episódio (eficiência)
-        if has_steps:
-            ax = fig.add_subplot(gs[panel]); panel += 1
-            st  = cdata["steps"]
-            sep = cdata["episode"]
-            sw  = max(10, len(st) // 20)
-            m, lo, hi = smooth(st, sw)
-            ax.scatter(sep, st, color="mediumseagreen", alpha=0.2, s=8)
-            ax.plot(sep, m, color="mediumseagreen", lw=2,
-                    label=f"Média ({sw} ep.)")
-            ax.fill_between(sep, lo, hi, alpha=0.2, color="mediumseagreen")
-            ax.set_title("Passos até Cobertura ≥98% (eficiência)",
-                         fontweight="bold")
-            ax.set_xlabel("Episódio"); ax.set_ylabel("Passos")
-            ax.legend(fontsize=8); ax.grid(alpha=0.3)
-
-        # Painel: Comprimento de episódio (monitor)
-        ax = fig.add_subplot(gs[panel]); panel += 1
+        ax = fig.add_subplot(gs[2 if has_cov else 1])
         l = mdata["l"]
         m, lo, hi = smooth(l, W)
-        ax.scatter(ep, l, color="mediumpurple", alpha=0.15, s=8)
+        ax.scatter(ep, l, color="mediumpurple", alpha=0.15, s=6)
         ax.plot(ep, m, color="mediumpurple", lw=2, label=f"Média ({W} ep.)")
         ax.fill_between(ep, lo, hi, alpha=0.2, color="mediumpurple")
-        ax.set_title("Comprimento de Episódio (todos)", fontweight="bold")
+        ax.set_title("Comprimento de Episódio", fontweight="bold")
         ax.set_xlabel("Episódio"); ax.set_ylabel("Passos")
         ax.legend(fontsize=8); ax.grid(alpha=0.3)
 
@@ -287,35 +334,11 @@ def plot_results(log_dir, grid_size=None, num_obstacles=None):
         print(f"✅ Gráfico → {out}")
         plt.show()
     except Exception as e:
-        print(f"⚠️  Erro ao gerar gráfico: {e}")
+        print(f"⚠️  Erro gráfico: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helpers de treino
-# ─────────────────────────────────────────────────────────────────────────────
-def _policy_kwargs():
-    return dict(
-        features_extractor_class=SmallGridCNN,
-        features_extractor_kwargs=dict(features_dim=256),
-        net_arch=dict(pi=[256, 128], vf=[256, 128]),
-    )
-
-def _make_vec(grid_size, num_obstacles, n_envs, log_dir):
-    return make_vec_env(
-        lambda: make_env(grid_size, num_obstacles, log_dir=log_dir),
-        n_envs=n_envs,
-    )
-
-def _callbacks(log_dir, save_freq=50_000):
-    return [
-        CheckpointCallback(save_freq=save_freq, save_path=log_dir,
-                           name_prefix="ckpt"),
-        CoverageLoggerCallback(log_dir=log_dir),
-    ]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Main
+# MAIN
 # ─────────────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     mode = sys.argv[1] if len(sys.argv) > 1 else "test"
@@ -328,47 +351,64 @@ if __name__ == "__main__":
     except gym.error.Error:
         pass
 
-    # ── PARÂMETROS ────────────────────────────────────────────────────────────
-    GRID_SIZE     = 10
-    NUM_OBSTACLES = 20
-    N_ENVS        = 8
-    LOG_DIR       = f"log/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}"
-    MODEL_PATH    = f"data/ppo_coverage_{GRID_SIZE}x{GRID_SIZE}.zip"
-
-    # Checkpoint mais próximo de 6.1M steps — ajuste se necessário
-    CHECKPOINT    = f"{LOG_DIR}/ckpt_6100000_steps.zip"
-
-    # ── TRAIN (do zero) ───────────────────────────────────────────────────────
+    # ── TRAIN ─────────────────────────────────────────────────────────────────
     if mode == "train":
-        TOTAL = 7_000_000
         os.makedirs("data", exist_ok=True)
         os.makedirs(LOG_DIR, exist_ok=True)
-        print(f"--- Treino do zero | Grid {GRID_SIZE}×{GRID_SIZE} | "
-              f"{N_ENVS} envs | {TOTAL:,} steps ---")
+        print(f"--- Grid {GRID_SIZE}×{GRID_SIZE} | Visão 5×5 | "
+              f"{NUM_OBSTACLES} obstáculos | {N_ENVS} envs | "
+              f"{TOTAL_TIMESTEPS:,} steps ---")
 
-        vec_env = _make_vec(GRID_SIZE, NUM_OBSTACLES, N_ENVS, LOG_DIR)
+        vec_env = make_vec_env(
+            lambda: make_env(GRID_SIZE, NUM_OBSTACLES,
+                             vision_radius=VISION_RADIUS,
+                             log_dir=LOG_DIR),
+            n_envs=N_ENVS,
+        )
+
+        policy_kwargs = dict(
+            features_extractor_class=GridCNN,
+            features_extractor_kwargs=dict(features_dim=256),
+            net_arch=dict(pi=[256, 128], vf=[256, 128]),
+        )
 
         model = PPO(
-            "CnnPolicy", vec_env,
-            verbose=1, device="cuda",
-            policy_kwargs=_policy_kwargs(),
+            "CnnPolicy",
+            vec_env,
+            verbose=1,
+            device="cuda",
+            policy_kwargs=policy_kwargs,
 
             learning_rate=3e-4,
-            gamma=0.995,
+            gamma=0.999,       # episódios longos (até 6000 passos) — desconto lento
             ent_coef=0.01,
-            n_steps=512,
-            batch_size=256,
+            n_steps=1024,      # 8 envs × 1024 = 8192 amostras por rollout
+            batch_size=512,
             n_epochs=10,
             vf_coef=0.5,
             clip_range=0.2,
             max_grad_norm=0.5,
-            target_kl=0.015,       # MELHORIA: evita policy degradation
+            target_kl=0.02,    # para atualização se KL > 0.02 — evita degradação
             tensorboard_log=LOG_DIR,
         )
 
+        print(f"\n📐 CNN: (4,{GRID_SIZE},{GRID_SIZE}) → Conv(32,s1) → "
+              f"Conv(64,s2) → Conv(64,s1) → flat → Linear(256)")
+        print(f"👁  Visão: janela {2*VISION_RADIUS+1}×{2*VISION_RADIUS+1} "
+              f"com fog-of-war acumulativo\n")
+
+        callbacks = [
+            CheckpointCallback(save_freq=100_000, save_path=LOG_DIR,
+                               name_prefix="ckpt"),
+            CoverageLoggerCallback(log_dir=LOG_DIR),
+        ]
+
         try:
-            model.learn(total_timesteps=TOTAL, progress_bar=True,
-                        callback=_callbacks(LOG_DIR))
+            model.learn(
+                total_timesteps=TOTAL_TIMESTEPS,
+                progress_bar=True,
+                callback=callbacks,
+            )
         except KeyboardInterrupt:
             print("\n🛑 Interrompido.")
         finally:
@@ -378,59 +418,9 @@ if __name__ == "__main__":
             plot_results(LOG_DIR, grid_size=GRID_SIZE,
                          num_obstacles=NUM_OBSTACLES)
 
-    # ── FINETUNE (continua do melhor checkpoint) ───────────────────────────────
-    elif mode == "finetune":
-        TOTAL = 3_000_000
-
-        # Encontra o checkpoint automaticamente se não existir o exato
-        if not os.path.exists(CHECKPOINT):
-            ckpts = sorted([
-                f for f in os.listdir(LOG_DIR)
-                if f.startswith("ckpt_") and f.endswith("_steps.zip")
-            ], key=lambda x: int(x.split("_")[1]))
-            if not ckpts:
-                print(f"❌ Nenhum checkpoint em {LOG_DIR}")
-                sys.exit(1)
-            # Pega o checkpoint com mais steps (geralmente o melhor antes do crash)
-            # Idealmente você troca manualmente para o de ~6.1M steps
-            CHECKPOINT = os.path.join(LOG_DIR, ckpts[-1])
-            print(f"⚠️  Checkpoint não encontrado exato. Usando: {CHECKPOINT}")
-
-        print(f"--- Fine-tuning | {CHECKPOINT} ---")
-        print(f"    + {TOTAL:,} steps adicionais")
-        print(f"    + learning_rate=1e-4 (metade)")
-        print(f"    + clip_range=0.15 (mais conservador)")
-        print(f"    + target_kl=0.012 (mais estrito)")
-
-        vec_env = _make_vec(GRID_SIZE, NUM_OBSTACLES, N_ENVS, LOG_DIR)
-
-        model = PPO.load(CHECKPOINT, env=vec_env, device="cuda")
-
-        # Fine-tuning: passos menores e mais conservadores
-        model.learning_rate = 1e-4
-        model.clip_range    = lambda _: 0.15
-        model.target_kl     = 0.012
-        model.ent_coef      = 0.005  # menos exploração — refina política existente
-
-        try:
-            model.learn(
-                total_timesteps=TOTAL,
-                progress_bar=True,
-                callback=_callbacks(LOG_DIR, save_freq=50_000),
-                reset_num_timesteps=False,  # continua contagem de steps
-            )
-        except KeyboardInterrupt:
-            print("\n🛑 Interrompido.")
-        finally:
-            os.makedirs("data", exist_ok=True)
-            model.save(MODEL_PATH)
-            print(f"✅ Modelo salvo → {MODEL_PATH}")
-            plot_results(LOG_DIR, grid_size=GRID_SIZE,
-                         num_obstacles=NUM_OBSTACLES)
-
     # ── TEST ──────────────────────────────────────────────────────────────────
     elif mode == "test":
-        print(f"--- Teste: Grid {GRID_SIZE}×{GRID_SIZE} ---")
+        print(f"--- Teste: Grid {GRID_SIZE}×{GRID_SIZE} | Visão 5×5 ---")
         if not os.path.exists(MODEL_PATH):
             print(f"❌ Modelo não encontrado: {MODEL_PATH}")
             sys.exit(1)
@@ -438,11 +428,14 @@ if __name__ == "__main__":
         model = PPO.load(MODEL_PATH)
         print("✅ Modelo carregado.")
 
-        env = make_env(GRID_SIZE, NUM_OBSTACLES,
-                       render_mode="human",
-                       seed=np.random.randint(1000))
+        env = make_env(
+            GRID_SIZE, NUM_OBSTACLES,
+            vision_radius=VISION_RADIUS,
+            render_mode="human",
+            seed=np.random.randint(10000),
+        )
 
-        total_cov  = 0.0
+        total_cov   = 0.0
         total_steps = 0.0
         N = 5
 
@@ -450,19 +443,25 @@ if __name__ == "__main__":
             print(f"\n--- Episódio {i+1}/{N} ---")
             obs, _ = env.reset()
             done = truncated = False
-            steps = total_r = 0
+            steps = 0
+            total_r = 0.0
 
             while not (done or truncated):
                 action, _ = model.predict(obs, deterministic=True)
                 obs, r, done, truncated, _ = env.step(int(action))
-                total_r += r; steps += 1
+                total_r += r
+                steps   += 1
+
                 if env.render_mode == "human":
+                    # Passa células visitadas ao env base para renderização
                     w = env
                     while hasattr(w, "env") and not isinstance(w, CoverageWrapper):
                         w = w.env
                     if isinstance(w, CoverageWrapper):
-                        try: env.unwrapped.set_visited_cells(set(w.visited))
-                        except AttributeError: pass
+                        try:
+                            env.unwrapped.set_visited_cells(set(w.visited))
+                        except AttributeError:
+                            pass
                     env.render()
 
             print(f"  Passos:     {steps}")
@@ -476,12 +475,13 @@ if __name__ == "__main__":
                 pct = len(w.visited) / w.total_coverable_cells * 100
                 total_cov   += pct
                 total_steps += steps
-                print(f"  Cobertura:  {len(w.visited)}/{w.total_coverable_cells} ({pct:.1f}%)")
+                print(f"  Cobertura:  {len(w.visited)}/{w.total_coverable_cells}"
+                      f" ({pct:.1f}%)")
 
-        print(f"\n📊 Cobertura média:     {total_cov/N:.1f}%")
-        print(f"📊 Passos médios:       {total_steps/N:.0f}")
+        print(f"\n📊 Cobertura média: {total_cov/N:.1f}%")
+        print(f"📊 Passos médios:   {total_steps/N:.0f}")
         env.close()
 
     else:
-        print("Use 'train', 'finetune' ou 'test'.")
+        print("Use 'train' ou 'test'.")
         sys.exit(1)
